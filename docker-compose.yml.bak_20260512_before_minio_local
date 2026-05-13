@@ -1,0 +1,91 @@
+
+services:
+  # Milvus 服务
+  milvus:
+    image: milvusdb/milvus:v2.6.13
+    command: ["milvus", "run", "standalone"]
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      # 使用测试环境的 MinIO
+      MINIO_ADDRESS: 20.21.1.182:9000
+      # MinIO 认证信息
+      MINIO_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:-minio}
+      MINIO_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:-minio@2021}
+      # 禁用 SSL（如果是 http）
+      MINIO_USE_SSL: "false"
+      # 可选：指定 bucket 名称
+      MINIO_BUCKET_NAME: ${MINIO_BUCKET:-milvus}
+    volumes:
+      - ${DOCKER_VOLUME_DIRECTORY:-.}/volumes/milvus:/var/lib/milvus
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      start_period: 90s
+      timeout: 20s
+      retries: 3
+    depends_on:
+      - etcd
+    networks:
+      - app-network
+    extra_hosts:
+      # 如果需要解析域名，添加 hosts 映射
+      - "20.21.1.182:20.21.1.182"
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.5
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+    volumes:
+      - etcd_data:/etcd
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    networks:
+      - app-network
+
+  vector-db-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5001:5000"
+    environment:
+      - MILVUS_HOST=milvus  # 使用服务名，不是 localhost
+      - MILVUS_PORT=19530
+      # 如果向量服务也需要直接访问 MinIO
+      - MINIO_ENDPOINT=20.21.1.182:9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minio}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minio@2021}
+      - MINIO_USE_SSL=false
+    depends_on:
+      - milvus
+      - etcd
+    networks:
+      - app-network
+    extra_hosts:
+      - "20.21.1.182:20.21.1.182"
+    command: python example/vector_databases/server.py
+
+  mcp-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - VECTOR_DB_URL=http://vector-db-service:5000  # 使用服务名
+    depends_on:
+      - vector-db-service
+    networks:
+      - app-network
+    command: uvicorn example.mcp_agent.api_server:app --host 0.0.0.0 --port 8000
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  etcd_data:

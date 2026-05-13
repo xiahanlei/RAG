@@ -1,0 +1,31 @@
+services:
+  vector-db-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5000:8000" # 宿主机端口5000映射容器内8000
+    environment:
+      # 关键：告诉服务使用本地的Milvus Lite数据库文件
+      - MILVUS_URI=/app/data/milvus_data.db
+      - MILVUS_COLLECTION=agent_rag
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-}
+    volumes:
+      - ./data:/app/data # 将数据库文件持久化到本地
+      - .:/app
+    command: uvicorn example.vector_databases.api_server:app --host 0.0.0.0 --port 8000
+
+  mcp-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - VECTOR_DB_URL=http://vector-db-service:5000
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-}
+    depends_on:
+      - vector-db-service
+    volumes:
+      - .:/app
+    command: uvicorn example.mcp_agent.api_server:app --host 0.0.0.0 --port 8000
