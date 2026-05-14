@@ -70,7 +70,7 @@ class KnowledgeBaseSearcher:
         if self.reranker_enabled :
             try:
                 self.reranker = CohereRerank(
-                    cohere_api_key="ECh2AlpW8MhIx5Ip1rEvAKaAeV5kVAAGgMD3Dvx7",
+                    cohere_api_key="your_api_key",
                     top_n=3  # 重排序后保留的文档数量
                 )
                 logger.info("Initialized Cohere reranker.")
