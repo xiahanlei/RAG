@@ -12,3 +12,4 @@ docx2txt
 python-docx
 openpyxl
 unstructured
+flask-socketio

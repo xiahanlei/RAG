@@ -202,6 +202,10 @@ const messages = ref([])
 const thinking = ref(false)
 const messagesRef = ref(null)
 
+// WebSocket
+let ws = null
+const wsUrl = `ws://${window.location.hostname}:5000`
+
 // Markdown 渲染
 const renderMarkdown = (text) => {
   return md.render(text || '')
@@ -264,43 +268,73 @@ const submitUpload = async () => {
 const sendMessage = async () => {
   const query = inputQuery.value.trim()
   if (!query || thinking.value) return
-  
+
   messages.value.push({
     role: 'user',
     content: query
   })
-  
+
+  // 创建占位 assistant 消息
+  const assistantIndex = messages.value.length
+  messages.value.push({
+    role: 'assistant',
+    content: '',
+    sources: [],
+    showSources: false
+  })
+
   inputQuery.value = ''
   thinking.value = true
   scrollToBottom()
 
-  try {
-    const response = await axios.post(`${API_BASE}/query`, {
-      question: query,
-      collection_name: collectionName.value
-    })
+  // 建立 WebSocket 连接
+  ws = new WebSocket(wsUrl)
 
-    if (response.data.success) {
-      messages.value.push({
-        role: 'assistant',
-        content: response.data.answer,
-        sources: response.data.sources,
-        showSources: false // 默认折叠引用
-      })
-    } else {
-       messages.value.push({
-        role: 'assistant',
-        content: '抱歉，我遇到了一些问题：' + response.data.message
-      })
+  ws.onopen = () => {
+    ws.send(JSON.stringify({
+      event: 'query',
+      data: {
+        question: query,
+        collection_name: collectionName.value
+      }
+    }))
+  }
+
+  ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data)
+
+    // Flask-SocketIO 的消息格式: {"name":"event_name","args":[{...}]}
+    const eventName = msg.name || msg.event
+    const payload = msg.args ? msg.args[0] : msg.data || msg
+
+    if (eventName === 'answer_chunk') {
+      messages.value[assistantIndex].content += payload.content
+      scrollToBottom()
+    } else if (eventName === 'answer_complete') {
+      messages.value[assistantIndex].sources = payload.sources || []
+      finishQuery()
+    } else if (eventName === 'error') {
+      if (messages.value[assistantIndex].content === '') {
+        messages.value[assistantIndex].content = '抱歉，我遇到了一些问题：' + (payload.message || '未知错误')
+      }
+      finishQuery()
     }
-  } catch (error) {
-     messages.value.push({
-        role: 'assistant',
-        content: '网络错误或服务不可用，请检查后端服务是否启动。'
-      })
-  } finally {
-    thinking.value = false
-    scrollToBottom()
+  }
+
+  ws.onerror = () => {
+    if (messages.value[assistantIndex].content === '') {
+      messages.value[assistantIndex].content = '网络错误或服务不可用，请检查后端服务是否启动。'
+    }
+    finishQuery()
+  }
+}
+
+const finishQuery = () => {
+  thinking.value = false
+  scrollToBottom()
+  if (ws) {
+    ws.close()
+    ws = null
   }
 }
 

@@ -14,7 +14,7 @@ def test_dashscope_embedding():
     """测试 DashScope 嵌入模型"""
     
     # 配置
-    api_key = "sk-8c497e3d49a849d3a9c161c551793fe2"
+    api_key = "your_api_key"
     model = "text-embedding-v1"
     
     logger.info("=" * 50)
@@ -129,7 +129,7 @@ def test_with_vector_db_manager():
             milvus_port=19530,
             collection_name="test_collection",
             embedding_model="text-embedding-v1",
-            dashscope_api_key="sk-8c497e3d49a849d3a9c161c551793fe2",
+            dashscope_api_key="your_api_key",
             chunk_size=500,
             chunk_overlap=50
         )
@@ -168,7 +168,7 @@ def check_network_connectivity():
         # 测试 DashScope API 连通性
         url = "https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding-v1"
         headers = {
-            "Authorization": f"Bearer sk-8c497e3d49a849d3a9c161c551793fe2",
+            "Authorization": f"Bearer your_api_key",
             "Content-Type": "application/json"
         }
         

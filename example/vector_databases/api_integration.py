@@ -356,12 +356,53 @@ def internal_error(error):
     }), 500
 
 
-def register_vector_routes(app):
+def setup_socket_events(socketio_instance):
+    """设置 WebSocket 事件"""
+
+    @socketio_instance.on('query')
+    def handle_query(data):
+        """WebSocket 流式问答"""
+        global vector_retriever
+
+        if not vector_retriever:
+            socketio_instance.emit('error', {'message': '向量系统未初始化'})
+            return
+
+        try:
+            question = data.get('question', '')
+            collection_name = data.get('collection_name', '')
+            k = data.get('k', 5)
+
+            if not question or not collection_name:
+                socketio_instance.emit('error', {'message': '请提供 question 和 collection_name 参数'})
+                return
+
+            for event in vector_retriever.answer_question_stream(question, k=k, collection_name=collection_name):
+                if event['type'] == 'chunk':
+                    socketio_instance.emit('answer_chunk', {'content': event['content']})
+                elif event['type'] == 'complete':
+                    socketio_instance.emit('answer_complete', {
+                        'sources': event['sources'],
+                        'confidence': event['confidence'],
+                        'question_type': event['question_type']
+                    })
+                elif event['type'] == 'error':
+                    socketio_instance.emit('error', {'message': event['message']})
+
+        except Exception as e:
+            logger.error(f"WebSocket 查询错误: {str(e)}")
+            socketio_instance.emit('error', {'message': f'查询失败: {str(e)}'})
+
+
+def register_vector_routes(app, socketio_instance):
     """注册向量数据库路由到Flask应用"""
     app.register_blueprint(vector_bp)
-    
+
     # 自动初始化向量系统
     with app.app_context():
         init_vector_system()
-    
+
+    # 注册 WebSocket 事件
+    setup_socket_events(socketio_instance)
+
     logger.info("向量数据库API路由已注册")

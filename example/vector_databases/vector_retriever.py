@@ -175,6 +175,106 @@ class VectorRetriever:
                 scores=[]
             )
     
+    def answer_question_stream(self,
+                               question: str,
+                               collection_name: str,
+                               k: int = 5):
+        """
+        流式回答问题，逐个 yield token
+
+        Args:
+            question: 问题文本
+            collection_name: Milvus 集合名称
+            k: 上下文文档数量
+
+        Yields:
+            dict: {"type": "chunk", "content": "..."} 或
+                  {"type": "complete", "sources": [...], "confidence": float}
+        """
+        try:
+            # 1. 分类问题
+            question_type = QuestionClassifier.classify_question(question)
+
+            # 2. 检索相关文档
+            relevant_docs_with_scores = self.search_similar_content(
+                query=question,
+                collection_name=collection_name,
+                k=k
+            )
+
+            # 3. 构建上下文
+            context_parts = []
+            source_documents = []
+            scores = []
+
+            if relevant_docs_with_scores:
+                for i, (doc, score) in enumerate(relevant_docs_with_scores):
+                    context_parts.append(f"参考资料{i+1}: {doc.page_content}")
+                    source_documents.append(doc)
+                    scores.append(score)
+
+            context = "\n\n".join(context_parts)
+
+            # 4. 流式生成回答
+            from openai import OpenAI
+
+            api_key = os.environ.get("DASHSCOPE_API_KEY", "")
+            base_url = os.environ.get("LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+            model_name = os.environ.get("LLM_MODEL", "qwen-plus")
+
+            client = OpenAI(api_key=api_key, base_url=base_url)
+
+            system_prompt = (
+                "你是一个智能助手。请基于提供的【参考资料】回答用户的问题。\n"
+                "如果参考资料为空或与问题无关，请忽略参考资料，利用你的通用知识进行回答，"
+                "并在回答开头说明：'知识库中未找到相关内容，以下是基于通用知识的回答：'。\n"
+                "回答要简洁、准确、有条理。"
+            )
+
+            user_prompt = f"问题：{question}\n\n"
+            if context:
+                user_prompt += f"【参考资料】：\n{context}"
+            else:
+                user_prompt += "【参考资料】：(无)"
+
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.7,
+                stream=True
+            )
+
+            for chunk in response:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    yield {"type": "chunk", "content": chunk.choices[0].delta.content}
+
+            # 5. 计算置信度
+            confidence = self._calculate_confidence(scores)
+
+            # 6. 发送完成信号，附带来源和置信度
+            sources = [
+                {
+                    "content": doc.page_content,
+                    "metadata": doc.metadata,
+                    "score": score
+                }
+                for doc, score in zip(source_documents, scores)
+            ]
+
+            yield {
+                "type": "complete",
+                "sources": sources,
+                "confidence": confidence,
+                "question_type": question_type
+            }
+
+        except Exception as e:
+            logger.error(f"流式回答问题失败: {e}")
+            yield {"type": "error", "message": f"处理问题时出现错误: {str(e)}"}
+
     def _generate_answer_with_llm(self, question: str, context: str) -> str:
         """使用 LLM 生成回答"""
         try:
